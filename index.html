@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#101923">
+<title>Walkie Talkie Pro — گروهی</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#0b1118,#1b2a38);color:#f4f8fb;font-family:Tahoma,Arial,sans-serif;min-height:100vh;display:grid;place-items:center;padding:16px}
+.app{width:min(480px,100%);background:#17232f;border:1px solid #314353;border-radius:26px;padding:20px;box-shadow:0 20px 60px #0006}
+.top{display:flex;justify-content:space-between;align-items:center;color:#8ce9ee;font-size:12px}.brand{text-align:center;margin:20px 0}.brand h1{margin:0 0 7px;font-size:23px}.muted{color:#9eafbd;font-size:13px;line-height:1.8}
+.panel{background:#223442;border-radius:14px;padding:14px;margin:12px 0}
+label{display:block;color:#b9c8d2;font-size:12px;margin:0 0 7px}input{width:100%;background:#0f1922;border:1px solid #3a4c5c;border-radius:10px;padding:12px;color:white;font:inherit}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{width:100%;border:0;border-radius:12px;padding:13px;background:#1aa5ad;color:#fff;font:inherit;font-weight:bold;margin-top:10px}.btn.secondary{background:#2b4557}.btn:disabled{opacity:.4}
+.status{text-align:center;padding:11px;border-radius:12px;background:#0f1922;color:#c3d2dd;font-size:13px;margin:14px 0}
+.ptt{display:block;width:175px;height:175px;border-radius:50%;margin:18px auto;border:7px solid #2d5360;background:radial-gradient(circle at 35% 25%,#48d7de,#087e94 70%);color:white;font-size:20px;font-weight:bold;box-shadow:0 0 0 9px #1c303d,0 14px 30px #0005;touch-action:none;user-select:none}
+.ptt.active{background:radial-gradient(circle at 35% 25%,#ffb66d,#cf4b35 70%);border-color:#75473e}
+.members{display:flex;flex-wrap:wrap;gap:7px}.member{background:#2b4557;border-radius:999px;padding:7px 10px;font-size:12px}.member.online{background:#145b50}.foot{font-size:11px;color:#d8bf8b;line-height:1.9;border-top:1px solid #354653;padding-top:13px;margin-top:18px}
+.hidden{display:none!important}audio{display:none}
+</style></head>
+<body><main class="app">
+<div class="top"><span>📻 WALKIE TALKIE PRO</span><span>گروهی · تا ۱۰ نفر</span></div>
+<div class="brand"><h1>بی‌سیم گروهی</h1><div class="muted">کد گروه را بساز یا وارد کن و با دوستانت زنده صحبت کن.</div></div>
+
+<section id="joinPanel" class="panel">
+ <div class="grid">
+  <div><label for="nickname">نام شما</label><input id="nickname" maxlength="20" placeholder="مثلاً علی"></div>
+  <div><label for="room">کد گروه</label><input id="room" maxlength="12" placeholder="مثلاً CHAMRAN"></div>
+ </div>
+ <button class="btn" id="create">ساخت گروه جدید</button>
+ <button class="btn secondary" id="join">ورود به گروه</button>
+ <div class="muted" style="margin-top:10px">برای ساخت گروه، نام وارد کن. برای ورود به گروه دوستت، همان کد را وارد کن.</div>
+</section>
+
+<section id="callPanel" class="hidden">
+ <div class="status" id="status">در حال اتصال…</div>
+ <div class="panel"><div class="muted">گروه: <b id="roomLabel"></b> · کانال مشترک</div><div class="muted" style="margin-top:7px">اعضا (<span id="count">0</span>/10)</div><div class="members" id="members"></div></div>
+ <button class="ptt" id="ptt" disabled>🎙️<br>نگه‌دار</button>
+ <div class="muted" style="text-align:center">برای صحبت دکمه را نگه دار؛ با رهاکردن میکروفون قطع می‌شود.</div>
+ <button class="btn secondary" id="copy">کپی کد گروه</button>
+ <button class="btn secondary" id="leave">خروج از گروه</button>
+</section>
+<div class="foot">ارتباط زنده از طریق WebRTC و سرور هماهنگ‌کننده انجام می‌شود. برای اینترنت، این برنامه باید روی HTTPS میزبانی شود و سرور WebSocket باید در دسترس باشد. این پروژه با کد منبع ارائه شده و هنوز روی اینترنت عمومی میزبانی نشده است.</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let ws=null, localStream=null, peers=new Map(), roomCode="", myId="", myName="", holding=false, pendingIce=new Map();
+const status=s=>$("status").textContent=s;
+function serverUrl(){
+ const configured=window.WALKIE_SIGNAL_URL;
+ if(configured)return configured;
+ const proto=location.protocol==="https:"?"wss:":"ws:";
+ return proto+"//"+location.host;
+}
+function randomRoom(){return Math.random().toString(36).slice(2,8).toUpperCase()}
+function send(data){if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(data))}
+async function enter(create){
+ myName=$("nickname").value.trim()||"کاربر";
+ roomCode=($("room").value.trim()||(create?randomRoom():"")).toUpperCase();
+ if(!roomCode){alert("کد گروه را وارد کن.");return}
+ if(!/^[A-Z0-9_-]{3,12}$/.test(roomCode)){alert("کد باید ۳ تا ۱۲ حرف انگلیسی یا عدد باشد.");return}
+ $("room").value=roomCode;
+ try{
+  status("در حال گرفتن اجازهٔ میکروفون…");
+  localStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+ }catch(e){alert("برای صحبت باید اجازهٔ میکروفون را بدهی و صفحه را از HTTPS یا localhost باز کنی.");return}
+ $("joinPanel").classList.add("hidden");$("callPanel").classList.remove("hidden");$("roomLabel").textContent=roomCode;
+ try{ws=new WebSocket(serverUrl())}catch(e){cleanup();alert("آدرس سرور معتبر نیست.");return}
+ ws.onopen=()=>send({type:"join",room:roomCode,name:myName});
+ ws.onmessage=async ev=>{let m;try{m=JSON.parse(ev.data)}catch{return}await handle(m)};
+ ws.onclose=()=>{if(!$("callPanel").classList.contains("hidden"))status("ارتباط با سرور قطع شد؛ دوباره وارد شو.")};
+ ws.onerror=()=>status("خطا در اتصال به سرور؛ آدرس سرور را بررسی کن.");
+}
+async function handle(m){
+ if(m.type==="joined"){myId=m.id;status("متصل شدی. برای صحبت دکمه را نگه دار.");$("ptt").disabled=false;renderMembers(m.members||[]);for(const p of (m.peers||[]))await makeOffer(p.id,p.name);return}
+ if(m.type==="room-full"){alert("این گروه پر است (حداکثر ۱۰ نفر).");cleanup();return}
+ if(m.type==="error"){status(m.message||"خطا");return}
+ if(m.type==="peer-joined"){renderMembers(m.members||[]);return}
+ if(m.type==="peer-left"){closePeer(m.id);renderMembers(m.members||[]);return}
+ if(m.type==="offer"){
+  const pc=getPeer(m.from,m.name);await pc.setRemoteDescription(m.offer);await flushIce(m.from);
+  const answer=await pc.createAnswer();await pc.setLocalDescription(answer);send({type:"answer",to:m.from,answer:pc.localDescription});return
+ }
+ if(m.type==="answer"){const pc=peers.get(m.from);if(pc){await pc.setRemoteDescription(m.answer);await flushIce(m.from)}return}
+ if(m.type==="ice"){const pc=peers.get(m.from);if(pc&&pc.remoteDescription)await pc.addIceCandidate(m.candidate).catch(()=>{});else{if(!pendingIce.has(m.from))pendingIce.set(m.from,[]);pendingIce.get(m.from).push(m.candidate)}return}
+ if(m.type==="talking"){const el=document.querySelector('[data-peer="'+m.id+'"]');if(el)el.style.outline=m.active?"2px solid #67e8f9":"none";return}
+}
+function renderMembers(members){
+ $("count").textContent=members.length;
+ $("members").innerHTML="";
+ members.forEach(m=>{const e=document.createElement("span");e.className="member online";e.dataset.peer=m.id;e.textContent=(m.id===myId?"شما: ":"")+m.name;$("members").appendChild(e)});
+}
+function getPeer(id,name){
+ if(peers.has(id))return peers.get(id);
+ const pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"}]});
+ peers.set(id,pc);
+ localStream.getTracks().forEach(t=>{t.enabled=false;pc.addTrack(t,localStream)});
+ pc.onicecandidate=e=>{if(e.candidate)send({type:"ice",to:id,candidate:e.candidate})};
+ pc.ontrack=e=>{let audio=document.getElementById("audio-"+id);if(!audio){audio=document.createElement("audio");audio.id="audio-"+id;audio.autoplay=true;audio.playsInline=true;document.body.appendChild(audio)}audio.srcObject=e.streams[0];audio.play().catch(()=>status("برای شنیدن صدا، یک بار صفحه را لمس کن."))};
+ pc.onconnectionstatechange=()=>{if(pc.connectionState==="failed")status("اتصال مستقیم به یکی از اعضا ناموفق بود؛ ممکن است TURN server لازم باشد.")};
+ return pc;
+}
+async function makeOffer(id,name){
+ const pc=getPeer(id,name);const offer=await pc.createOffer();await pc.setLocalDescription(offer);send({type:"offer",to:id,offer:pc.localDescription,name:myName});
+}
+async function flushIce(id){const pc=peers.get(id),arr=pendingIce.get(id)||[];for(const c of arr)await pc.addIceCandidate(c).catch(()=>{});pendingIce.delete(id)}
+function closePeer(id){const p=peers.get(id);if(p)p.close();peers.delete(id);pendingIce.delete(id);const a=document.getElementById("audio-"+id);if(a)a.remove()}
+function startTalk(e){if(e)e.preventDefault();if(holding||!localStream)return;holding=true;localStream.getAudioTracks().forEach(t=>t.enabled=true);$("ptt").classList.add("active");$("ptt").innerHTML="🔴<br>در حال صحبت";send({type:"talking",active:true})}
+function stopTalk(){if(!holding)return;holding=false;if(localStream)localStream.getAudioTracks().forEach(t=>t.enabled=false);$("ptt").classList.remove("active");$("ptt").innerHTML="🎙️<br>نگه‌دار";send({type:"talking",active:false})}
+function cleanup(){
+ stopTalk();if(ws){try{ws.close()}catch{}ws=null}for(const id of [...peers.keys()])closePeer(id);
+ if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null}
+ $("callPanel").classList.add("hidden");$("joinPanel").classList.remove("hidden");$("ptt").disabled=true;
+}
+$("create").onclick=()=>enter(true);$("join").onclick=()=>enter(false);$("leave").onclick=cleanup;
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText(roomCode);status("کد گروه کپی شد: "+roomCode)}catch{status("کد گروه: "+roomCode)}};
+$("ptt").addEventListener("pointerdown",startTalk);["pointerup","pointerleave","pointercancel","lostpointercapture"].forEach(e=>$("ptt").addEventListener(e,stopTalk));
+document.addEventListener("visibilitychange",()=>{if(document.hidden)stopTalk()});
+</script></body></html>
